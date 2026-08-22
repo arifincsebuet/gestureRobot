@@ -1,0 +1,11 @@
+system,throughput,note
+"RAGA (measured,
+this work)",145249.94532520516,"single core, O(1) decision, incl. signature verify"
+"EdgeStream
+(edge, per node)",2800,"industrial IoT scenario, edge node, published"
+"SCEPter
+(buffered CEP)",3000,"stateful semantic+CEP query, 2s buffer, 25% cache"
+"Esper+RabbitMQ
+(sustained)",20000,"sustained long-run throughput, simple pattern"
+"Esper+Kafka
+(peak, simple)",150000,"peak, select* pattern, 8 partitions"

@@ -1,0 +1,5 @@
+label,hazard_idx,c,T,outcome
+"visitor HALT
+on robot (measured)",3,0.001,9.999000099990002e-05,EXECUTE
+"visitor HALT
+on lamp (measured)",0,0.001,0.3333333333333333,DENY

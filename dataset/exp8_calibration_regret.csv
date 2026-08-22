@@ -1,0 +1,2 @@
+T_perm_CRIT,C_FA,C_FR,eps,regret_bound,regret_in_units_of_phi,band_lo,band_hi,operator_c,operator_inside_band
+0.999990000099999,2000000,20,0.01,20000.2,1000.01,0.98999,1.0,0.9993,True

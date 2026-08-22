@@ -1,0 +1,5 @@
+configuration,policy,safety_mean,safety_ci,security_mean,security_ci
+full (raga+quorum+live),raga+quorum+live,113.7,7.12,115.5,5.95
+minus liveness,raga+quorum,113.5,7.06,135.9,5.9
+minus quorum,raga+live,129.9,8.61,21.1,3.56
+minus both (raga core),raga,129.7,8.58,43.1,3.47

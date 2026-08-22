@@ -1,0 +1,6 @@
+gesture_error,naive_safety,naive_security,failsafe_safety,failsafe_security
+0.0,0.0,44.0,0.0,44.0
+0.01,63.3,44.4,0.0,43.5
+0.02,125.2,45.3,0.0,43.3
+0.05,323.2,44.6,0.0,41.9
+0.1,653.2,44.7,0.0,39.4
