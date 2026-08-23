@@ -215,7 +215,3 @@ hazards, the best-characterised human hazard-reaction data we could find;
 measuring the band for *gestural* responses on deployed hardware is the main
 outstanding measurement, and the paper says so.
 
-
-At camera-ready, restore attribution, add a real `LICENSE` (MIT and Apache-2.0
-are both common for artifacts like this), and re-point the paper at the
-permanent repository.
