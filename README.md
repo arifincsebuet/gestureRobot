@@ -215,53 +215,6 @@ hazards, the best-characterised human hazard-reaction data we could find;
 measuring the band for *gestural* responses on deployed hardware is the main
 outstanding measurement, and the paper says so.
 
-## Publishing an anonymous review link
-
-The files in this repository are clean. What usually breaks anonymity is
-everything *around* them — the account that owns the repository and the
-identity Git stamps into every commit. Both are invisible in a file listing
-and both are permanent once pushed.
-
-**1. Anonymize the commit identity before the first commit.** Git reads
-`user.name` and `user.email` from your global config unless a repository
-overrides them, and rewriting that afterwards means rewriting history.
-
-```bash
-cd Experimentation
-git init
-git config user.name  "Anonymous"
-git config user.email "anonymous@example.com"   # repo-local, not --global
-git add .
-git commit -m "Reproducibility artifact for ICRA submission"
-```
-
-Verify before pushing — this must show `Anonymous`, not your name:
-
-```bash
-git log --format='%an <%ae>' -1
-```
-
-**2. Choose how the link is hosted.** Two options, in order of preference:
-
-- **[anonymous.4open.science](https://anonymous.4open.science)** — built for
-  double-anonymous review. It proxies a private GitHub repository behind an
-  anonymous URL, strips the owner, and lets you set an expiry after the
-  decision date. This is the safer choice: a mistake in your GitHub profile
-  cannot leak through it.
-- **A throwaway GitHub account** — works, but the account itself becomes
-  metadata. If you use one, create it with an email you do not use elsewhere,
-  leave the profile empty, and do not star, fork, or follow anything from it.
-  Do not fork or push from your personal account, and do not use a repository
-  name that contains your institution, group, or personal project naming.
-
-**3. Do not push from your personal account "just to test."** GitHub keeps the
-original owner in the network graph and in cached views, and a repository that
-was briefly public under your name can stay indexed.
-
-**4. Put the link in the paper.** Reviewers cannot evaluate an artifact they
-cannot reach, and the manuscript currently defers the URL to the camera-ready
-version. Replace that sentence in the Reproducibility section with the
-anonymous URL before submitting.
 
 At camera-ready, restore attribution, add a real `LICENSE` (MIT and Apache-2.0
 are both common for artifacts like this), and re-point the paper at the
