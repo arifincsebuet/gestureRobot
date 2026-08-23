@@ -1,2 +1,2 @@
-comparison,n_seeds,mean_difference,t_statistic,cohens_d
-polarity_only minus raga+quorum+live,30,223.4,48.977,8.942
+comparison,best_raga_variant,n_seeds,mean_difference,t_statistic,cohens_d,aggregate_reduction_x
+polarity_only minus raga,raga,30,203.17,49.395,9.018,2.942

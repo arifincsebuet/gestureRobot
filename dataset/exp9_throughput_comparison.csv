@@ -1,6 +1,6 @@
 system,throughput,note
 "RAGA (measured,
-this work)",145249.94532520516,"single core, O(1) decision, incl. signature verify"
+this work)",142397.08300486667,"single core, O(1) decision, incl. signature verify"
 "EdgeStream
 (edge, per node)",2800,"industrial IoT scenario, edge node, published"
 "SCEPter

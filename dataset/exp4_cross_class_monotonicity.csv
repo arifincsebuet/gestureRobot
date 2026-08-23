@@ -1,0 +1,4 @@
+step,dln_lambda,dln_alpha,dln_phi,T_res_decreasing,T_perm_increasing
+LOW->MEDIUM,10.0858,8.7557,9.2665,True,True
+MEDIUM->HIGH,2.3346,-4.7875,0.0,True,True
+HIGH->CRITICAL,1.1338,3.0211,3.9373,False,False

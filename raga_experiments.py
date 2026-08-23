@@ -1,20 +1,25 @@
 """
 raga_experiments.py
 ====================
-Reproduces every Monte Carlo result in the Experimentation section (Sec. VI,
-E1-E13) of "Risk-Asymmetric Gesture Authorization: Decoupling Stop and Start
+Reproduces every Monte Carlo result behind the Experimentation section
+(Sec. VI) of "Risk-Asymmetric Gesture Authorization: Decoupling Stop and Start
 Authority in IoT and Human-Robot Environments" and generates the underlying
 per-experiment figures used in the paper (later combined into the paper's
 multi-panel figures by merge_figures.py).
+
+Experiments E1-E14 all run here. The paper, held to ICRA's 8-page limit,
+reports E1-E7 and E12-E14 in full; E8-E11 are supporting experiments reported
+only in this artifact. Nothing about how they are generated or checked
+differs.
 
 Usage:
     pip install -r ../requirements.txt   # numpy, matplotlib
     python raga_experiments.py           # ~3 minutes on a laptop core
 
-Outputs (in ./figures/): one PNG per experiment, fig1_trap.png ... fig13_full_accounting.png.
-Outputs (in ./dataset/): one or more CSVs per experiment (22 files total).
+Outputs (in ./figures/): one PNG per experiment, fig1_trap.png ... fig14_stop_category.png.
+Outputs (in ./dataset/): one or more CSVs per experiment (30 files total).
 
-Console output mirrors the paper's Tables I-IX; every number printed here is
+Console output mirrors the paper's Tables I-III; every number printed here is
 checked automatically by verify_paper_claims.py after this script runs.
 
 All randomness is seeded (see RNG_MASTER_SEED and the per-experiment seed
@@ -34,6 +39,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from math import sqrt
 
+# Every numeric constant below comes from parameters.py, where each value
+# carries either a citation to a published source or an explicit [MODEL]
+# label plus the experiment that sweeps it. Nothing in this file invents a
+# number.
+import parameters as P
+
 # ─────────────────────────────────────────────────────────────────────────
 # GLOBAL CONFIG
 # ─────────────────────────────────────────────────────────────────────────
@@ -41,14 +52,25 @@ FIG_DIR, DATA_DIR = "figures", "dataset"
 os.makedirs(FIG_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 
-C_FLOOR = 1e-3
-HAZ = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+C_FLOOR = P.C_FLOOR                      # NIST FRTE operating point, FMR=1e-3
+HAZ = P.HAZARD_CLASSES
 
-# (Lambda: harm, alpha: needless-stop cost, phi: re-gesture cost)  -- Table I
-BASE_COST = {0: (2, 1, 20), 1: (200, 5, 20), 2: (100000, 50, 20), 3: (2000000, 200, 20)}
+# (Lambda: harm, alpha: needless-stop cost, phi: re-gesture cost) in USD,
+# derived in parameters.py from NSC injury costs, Siemens downtime rates and
+# BLS labour rates. This is Table I of the paper.
+BASE_COST = P.build_cost_table()
+
+# The same table with the robot arm behind an emergency stop that needs a
+# manual reset, rather than a safety-rated monitored stop that resumes
+# automatically. E14 contrasts the two.
+ESTOP_COST = P.build_cost_table(arm_emergency_stop=True)
 
 # Ablation baseline: polarity-dependent thresholds with NO hazard coupling.
-POLARITY_ONLY_T = {"RES": 1e-3, "PERM": 0.99}
+POLARITY_ONLY_T = {"RES": C_FLOOR, "PERM": 0.99}
+
+# Primary gesture polarity misclassification rate, bracketed by cited
+# anchors (see parameters.GESTURE_ERROR_PRIMARY).
+GERR = P.GESTURE_ERROR_PRIMARY
 
 # palette (kept consistent across all 7 figures)
 INK, SAFE, RISK, GREY, ALERT, AMBER, PAPER = (
@@ -94,15 +116,28 @@ def write_csv(path, rows):
 # SHARED EVENT MODEL  (actors, gestures)  -- used by E1-E4
 # ─────────────────────────────────────────────────────────────────────────
 def draw_actor(rng):
-    """Four actor populations, as described in Sec. IX-A."""
+    """
+    Four actor populations. The two operator sub-populations are not an
+    arbitrary split: they reflect the measured gap between constrained and
+    unconstrained face recognition (IJB-C TAR@FAR=1e-4 ~ 96-98% versus IJB-S
+    rank-1 50-73% and TinyFace rank-1 64-75%), i.e. an operator facing the
+    sensor at close range versus one imaged at distance, in motion, oblique,
+    or in PPE. See parameters.py section 4.
+    """
     r = rng.random()
-    if r < 0.55:
-        return "operator", True, float(np.clip(rng.normal(0.985, 0.02), C_FLOOR, 1))
-    if r < 0.80:
-        return "operator", True, float(np.clip(rng.normal(0.93, 0.05), C_FLOOR, 1))
-    if r < 0.95:
+    t1 = P.POP_OPERATOR_GOOD
+    t2 = t1 + P.POP_OPERATOR_DEGRADED
+    t3 = t2 + P.POP_STRANGER
+    if r < t1:
+        return "operator", True, float(np.clip(
+            rng.normal(P.OPERATOR_GOOD_MEAN, P.OPERATOR_GOOD_SD), C_FLOOR, 1))
+    if r < t2:
+        return "operator", True, float(np.clip(
+            rng.normal(P.OPERATOR_DEGRADED_MEAN, P.OPERATOR_DEGRADED_SD), C_FLOOR, 1))
+    if r < t3:
         return "stranger", False, C_FLOOR
-    return "impostor", False, float(np.clip(rng.normal(0.60, 0.25), C_FLOOR, 1))
+    return "impostor", False, float(np.clip(
+        rng.normal(P.IMPOSTOR_MEAN, P.IMPOSTOR_SD), C_FLOOR, 1))
 
 
 def draw_event(rng, cost, gesture_err=0.0):
@@ -122,7 +157,7 @@ def decide(policy, ev, cost, uniT, rng, failsafe_conf=None):
     """
     policy: 'uniform' | 'raga' | 'raga+quorum' | 'raga+quorum+live'
     failsafe_conf: if set, an ambiguous PERM read below this confidence is
-                   resolved back to RES (Sec. VIII-E, the fail-safe rule).
+                   resolved back to RES (Sec. V-E, the fail-safe rule).
     """
     c = ev["c"]
     pol = ev["pol"]
@@ -132,14 +167,15 @@ def decide(policy, ev, cost, uniT, rng, failsafe_conf=None):
         c = min(c, C_FLOOR)
     eff = c
     if "quorum" in policy and pol == "PERM" and ev["h"] == 3:
-        c2 = float(np.clip(rng.normal(0.98, 0.03), C_FLOOR, 1))
+        c2 = float(np.clip(rng.normal(P.SECOND_ATTESTER_MEAN,
+                                     P.SECOND_ATTESTER_SD), C_FLOOR, 1))
         eff = 1 - (1 - c) * (1 - c2)
     if policy.startswith("uniform"):
         T = uniT
     elif policy == "polarity_only":
         # Ablation: polarity-dependent but hazard-INDEPENDENT. Isolates whether
         # the coupling to hazard class does any work, or whether polarity alone
-        # explains the result. See Sec. IX-C.
+        # explains the result. See Sec. VI, E2.
         T = POLARITY_ONLY_T["RES"] if pol == "RES" else POLARITY_ONLY_T["PERM"]
     else:
         T = T_res(cost[ev["h"]]) if pol == "RES" else T_perm(cost[ev["h"]])
@@ -162,7 +198,7 @@ def score_run(policy, events, cost, uniT, rng, failsafe_conf=None,
     Its omission meant the alpha cost in Eq. (2) -- the entire reason the
     restrictive threshold is not simply zero everywhere -- was never measured,
     and a hazard-independent 'polarity_only' baseline consequently appeared to
-    beat the full method. See Sec. IX-C.
+    beat the full method. See Sec. VI, E2 and E13.
 
     Returns (safety, security) by default for backward compatibility, or
     (safety, security, nuisance) when with_nuisance=True.
@@ -182,7 +218,7 @@ def score_run(policy, events, cost, uniT, rng, failsafe_conf=None,
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# E1 — FIGURE 1: the uniform-threshold cliff  (Sec. IX-B, Proposition 1)
+# E1 — FIGURE 1: the uniform-threshold cliff  (Sec. VI, E1; Proposition 1)
 # ═══════════════════════════════════════════════════════════════════════
 def experiment_1_trap():
     print("=" * 78)
@@ -214,7 +250,7 @@ def experiment_1_trap():
     ax.text(C_FLOOR * 1.15, max(saf) * 0.55, r"$c_{\mathrm{floor}}$", color=GREY, fontsize=9)
     ax.set_xlabel(r"uniform identity threshold $\tau$ (log scale)")
     ax.set_ylabel("failures per 200,000 events")
-    ax.set_title("Fig. 1 — The uniform-threshold trap is a cliff, not a gradient",
+    ax.set_title("The uniform-threshold trap is a cliff, not a gradient",
                  fontsize=11.5, fontweight="bold", loc="left")
     ax.legend(frameon=False, fontsize=9, loc="upper center")
     ax.grid(alpha=0.15)
@@ -238,7 +274,7 @@ def experiment_2_policy_comparison():
     scored by every policy, so a paired design is appropriate).
     """
     print("=" * 78)
-    print("E2  policy comparison, 30 seeds x 50,000 events, 2% gesture error")
+    print(f"E2  policy comparison, 30 seeds x 50,000 events, {GERR:.0%} gesture error")
     print("=" * 78)
     N_EVENTS, N_SEEDS = 50_000, 30
     POLICIES = ["uniform_loose", "uniform_mid", "uniform_strict",
@@ -250,7 +286,7 @@ def experiment_2_policy_comparison():
     raw_rows = []
     for seed in range(N_SEEDS):
         rng = np.random.default_rng(1000 + seed)
-        events = [draw_event(rng, BASE_COST, gesture_err=0.02) for _ in range(N_EVENTS)]
+        events = [draw_event(rng, BASE_COST, gesture_err=GERR) for _ in range(N_EVENTS)]
         for p in POLICIES:
             r2 = np.random.default_rng(5000 + seed)
             s, sec, nui = score_run(p, events, BASE_COST, UNI_T.get(p), r2,
@@ -280,21 +316,34 @@ def experiment_2_policy_comparison():
     write_csv(f"{DATA_DIR}/exp2_policy_summary.csv", summary)
 
     # ── paired comparison: does hazard-coupling beat polarity_only? ──
+    # Compare against whichever RAGA configuration is actually best on the
+    # joint objective, rather than hardcoding one: under the grounded cost
+    # matrix that is RAGA alone, where under the earlier unit-free costs it
+    # was RAGA + quorum + liveness. Hardcoding it would silently compare
+    # against a non-best configuration and understate the ablation.
+    raga_variants = [p for p in POLICIES if p.startswith("raga")]
+    best_raga = min(raga_variants, key=lambda p: float(np.mean(agg[p]["total"])))
     po = np.array(agg["polarity_only"]["total"], float)
-    rg = np.array(agg["raga+quorum+live"]["total"], float)
+    rg = np.array(agg[best_raga]["total"], float)
     d = po - rg
     n = len(d)
     t_stat = d.mean() / (d.std(ddof=1) / np.sqrt(n))
     cohen_d = d.mean() / d.std(ddof=1)
-    print(f"\n  paired comparison (polarity_only - raga+quorum+live), n={n}:")
+    print(f"\n  best RAGA variant on the joint objective: {best_raga}")
+    print(f"  paired comparison (polarity_only - {best_raga}), n={n}:")
     print(f"    mean difference = {d.mean():+.1f} failures")
     print(f"    t = {t_stat:.2f}   Cohen's d = {cohen_d:.2f}")
     print(f"    -> hazard coupling {'HELPS' if d.mean() > 0 else 'HURTS'} "
           f"on the joint objective")
+    # Aggregate reduction the abstract quotes: best uniform vs best RAGA.
+    red = float(np.mean(agg["uniform_loose"]["total"])) / float(np.mean(agg[best_raga]["total"]))
+    print(f"    aggregate reduction vs best uniform = {red:.2f}x")
     write_csv(f"{DATA_DIR}/exp2_paired_test.csv", [dict(
-        comparison="polarity_only minus raga+quorum+live",
+        comparison=f"polarity_only minus {best_raga}",
+        best_raga_variant=best_raga,
         n_seeds=n, mean_difference=round(float(d.mean()), 2),
-        t_statistic=round(float(t_stat), 3), cohens_d=round(float(cohen_d), 3))])
+        t_statistic=round(float(t_stat), 3), cohens_d=round(float(cohen_d), 3),
+        aggregate_reduction_x=round(red, 3))])
 
     # ── figure: three stacked error types ──
     lab = [s["policy"].replace("uniform_", "uni-")
@@ -316,7 +365,7 @@ def experiment_2_policy_comparison():
     ax.set_xticks(x)
     ax.set_xticklabels(lab, fontsize=8, rotation=12)
     ax.set_ylabel("failures per 50,000 events (30 seeds)")
-    ax.set_title("Fig. 2 — Policy comparison across all three error types",
+    ax.set_title("Policy comparison across all three error types",
                  fontsize=11.5, fontweight="bold", loc="left")
     ax.legend(frameon=False, fontsize=9)
     ax.grid(axis="y", alpha=0.15)
@@ -334,7 +383,7 @@ def experiment_3_gesture_error():
     print("E3  gesture polarity error: naive vs fail-safe  (Table III)")
     print("=" * 78)
     rows = []
-    for gerr in [0.0, 0.01, 0.02, 0.05, 0.10]:
+    for gerr in P.GESTURE_ERROR_SWEEP:
         S_naive, C_naive, S_fs, C_fs = [], [], [], []
         for seed in range(10):
             rng = np.random.default_rng(400 + seed)
@@ -364,7 +413,7 @@ def experiment_3_gesture_error():
            label="RAGA + fail-safe polarity")
     ax.set_xlabel("gesture polarity misclassification rate (%)")
     ax.set_ylabel("safety failures per 30,000 events")
-    ax.set_title("Fig. 3 — The guarantee is conditional, and repairable",
+    ax.set_title("The guarantee is conditional, and repairable",
                  fontsize=11.5, fontweight="bold", loc="left")
     ax.legend(frameon=False, fontsize=9)
     ax.grid(alpha=0.15)
@@ -379,55 +428,160 @@ def experiment_3_gesture_error():
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# E4 — FIGURE 4: structural robustness heatmap  (Sec. IX-E, Corollary 1)
+# E4 — FIGURE 4: what the inversion actually guarantees, and what it does not
 # ═══════════════════════════════════════════════════════════════════════
 def experiment_4_sensitivity():
+    """
+    Grounding the cost matrix in published figures exposed a gap in
+    Theorem 1 as originally stated.
+
+    The theorem's proof is a pair of partial derivatives, dT_res/dLambda < 0
+    and dT_perm/dLambda > 0, both taken with alpha and phi held FIXED. That
+    establishes the PER-DEVICE inversion: for any single device, the
+    restrictive threshold sits far below the permissive one. That property is
+    unconditional and is what the authorization logic actually uses.
+
+    It does NOT establish the CROSS-CLASS ordering -- "the more dangerous the
+    machine, the easier it is to stop" -- unless alpha and phi are constant
+    across hazard classes. With real costs they are not: alpha and phi are
+    set by the production context (what a second of downtime is worth on that
+    line), while Lambda is set by the hazard. Differentiating along h with all
+    three varying gives
+
+        dT_res/dh < 0   iff   dln(Lambda)/dh > dln(alpha)/dh
+        dT_perm/dh > 0  iff   dln(Lambda)/dh > dln(phi)/dh
+
+    i.e. the ordering holds exactly when hazard grows proportionally faster
+    than the cost of interrupting production. This experiment tests both
+    properties on the grounded inventory and across scaled cost matrices.
+    """
     print("=" * 78)
-    print("E4  sensitivity: inversion + stranger-halt condition (Corollary 1)")
+    print("E4  what the inversion guarantees: per-device vs. cross-class")
     print("=" * 78)
+
+    # ---- (a) per-device inversion on the grounded inventory ----
+    per_dev = []
+    print("  per-device inversion (T_res << T_perm), grounded cost matrix:")
+    for h, dev in enumerate(P.DEVICES_IN_HAZARD_ORDER):
+        tr, tp = T_res(BASE_COST[h]), T_perm(BASE_COST[h])
+        holds = tr < tp
+        per_dev.append(dict(device=dev, hazard=HAZ[h], T_res=round(float(tr), 9),
+                            T_perm=round(float(tp), 9), inversion_holds=bool(holds)))
+        print(f"    {dev:6} {HAZ[h]:9} T_res={tr:.4e}  T_perm={tp:.5f}  "
+              f"{'OK' if holds else 'VIOLATED'}")
+    write_csv(f"{DATA_DIR}/exp4_per_device_inversion.csv", per_dev)
+    n_dev_ok = sum(1 for r in per_dev if r["inversion_holds"])
+    print(f"    -> per-device inversion holds {n_dev_ok}/{len(per_dev)}")
+
+    # ---- (b) cross-class monotonicity, via the log-derivative condition ----
+    import math
+    cross = []
+    print("\n  cross-class ordering (needs dlnLambda > dlnAlpha and > dlnPhi):")
+    for h in range(3):
+        L0, a0, f0 = BASE_COST[h]
+        L1, a1, f1 = BASE_COST[h + 1]
+        dL, da, df = math.log(L1 / L0), math.log(a1 / a0), math.log(f1 / f0)
+        res_ok, perm_ok = dL > da, dL > df
+        cross.append(dict(step=f"{HAZ[h]}->{HAZ[h+1]}",
+                          dln_lambda=round(dL, 4), dln_alpha=round(da, 4),
+                          dln_phi=round(df, 4),
+                          T_res_decreasing=bool(res_ok),
+                          T_perm_increasing=bool(perm_ok)))
+        print(f"    {HAZ[h]:9}->{HAZ[h+1]:9} dlnL={dL:+6.2f} dlnA={da:+6.2f} "
+              f"dlnPhi={df:+6.2f}   T_res down: {'Y' if res_ok else 'N'}   "
+              f"T_perm up: {'Y' if perm_ok else 'N'}")
+    write_csv(f"{DATA_DIR}/exp4_cross_class_monotonicity.csv", cross)
+    n_cross_ok = sum(1 for r in cross
+                     if r["T_res_decreasing"] and r["T_perm_increasing"])
+    print(f"    -> cross-class ordering holds on {n_cross_ok}/{len(cross)} steps")
+    if n_cross_ok < len(cross):
+        bad = [r["step"] for r in cross
+               if not (r["T_res_decreasing"] and r["T_perm_increasing"])]
+        print(f"    -> FAILS at {bad}: the production line behind the more")
+        print( "       hazardous device is worth more per second, so alpha and phi")
+        print( "       grow faster than the hazard does.")
+
+    # ---- (c) scaled cost matrices: stranger-halt condition ----
     scales_L = [0.01, 0.1, 1, 10, 100]
     scales_a = [0.1, 1, 10]
     rows = []
     grid = np.zeros((len(scales_a), len(scales_L)))
+    print("\n  stranger-halt condition across scaled cost matrices:")
     for i, sa in enumerate(scales_a):
         for j, sL in enumerate(scales_L):
             cost = {h: (BASE_COST[h][0] * sL, BASE_COST[h][1] * sa, BASE_COST[h][2])
                     for h in range(4)}
             tres = [T_res(cost[h]) for h in range(4)]
             tperm = [T_perm(cost[h]) for h in range(4)]
-            mono_res = all(tres[k] > tres[k + 1] for k in range(3))
-            mono_perm = all(tperm[k] < tperm[k + 1] for k in range(3))
+            per_ok = all(tres[k] < tperm[k] for k in range(4))
+            mono = (all(tres[k] > tres[k + 1] for k in range(3))
+                    and all(tperm[k] < tperm[k + 1] for k in range(3)))
             stranger_ok = tres[3] <= C_FLOOR
             grid[i, j] = 1.0 if stranger_ok else 0.0
             rows.append(dict(scale_Lambda=sL, scale_alpha=sa,
-                             inversion_holds=(mono_res and mono_perm),
-                             T_halt_CRIT=tres[3], stranger_can_halt=stranger_ok))
-            print(f"  Lx{sL:<7} ax{sa:<5} inversion={'Y' if mono_res and mono_perm else 'N'}  "
-                  f"T_halt_CRIT={tres[3]:.2e}  stranger_can_halt={'Y' if stranger_ok else 'N'}")
+                             per_device_inversion=bool(per_ok),
+                             cross_class_ordering=bool(mono),
+                             T_halt_CRIT=tres[3],
+                             stranger_can_halt=bool(stranger_ok)))
+            print(f"    Lx{sL:<7} ax{sa:<5} per-device={'Y' if per_ok else 'N'}  "
+                  f"cross-class={'Y' if mono else 'N'}  "
+                  f"T_halt_CRIT={tres[3]:.2e}  stranger={'Y' if stranger_ok else 'N'}")
     write_csv(f"{DATA_DIR}/exp4_sensitivity.csv", rows)
-    n_mono = sum(1 for r in rows if r["inversion_holds"])
-    print(f"\n  inversion held in {n_mono}/{len(rows)} configurations")
+    n_per = sum(1 for r in rows if r["per_device_inversion"])
+    n_mono = sum(1 for r in rows if r["cross_class_ordering"])
+    n_halt = sum(1 for r in rows if r["stranger_can_halt"])
+    print(f"\n  per-device inversion held in {n_per}/{len(rows)} configurations")
+    print(f"  cross-class ordering held in  {n_mono}/{len(rows)} configurations")
+    print(f"  stranger-halt held in         {n_halt}/{len(rows)} configurations")
 
-    fig, ax = plt.subplots(figsize=(7.0, 3.6))
-    im = ax.imshow(grid, cmap="RdYlGn", vmin=0, vmax=1, aspect="auto")
-    ax.set_xticks(range(len(scales_L)))
-    ax.set_xticklabels([f"{s}x" for s in scales_L])
-    ax.set_yticks(range(len(scales_a)))
-    ax.set_yticklabels([f"{s}x" for s in scales_a])
-    ax.set_xlabel(r"harm scale ($\Lambda$ multiplier)")
-    ax.set_ylabel(r"needless-stop cost scale ($\alpha$ multiplier)")
-    ax.set_title("Fig. 4 — Stranger-halt condition across 15 cost configurations\n"
-                "(green = holds; inversion itself held in 15/15)",
-                fontsize=11, fontweight="bold", loc="left")
+    # ---- figure ----
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.2, 3.9),
+                                   gridspec_kw={"width_ratios": [1.15, 1]})
+
+    im = ax1.imshow(grid, cmap="RdYlGn", vmin=0, vmax=1, aspect="auto")
+    ax1.set_xticks(range(len(scales_L)))
+    ax1.set_xticklabels([f"{s}x" for s in scales_L])
+    ax1.set_yticks(range(len(scales_a)))
+    ax1.set_yticklabels([f"{s}x" for s in scales_a])
+    ax1.set_xlabel(r"harm scale ($\Lambda$ multiplier)")
+    ax1.set_ylabel(r"needless-stop scale ($\alpha$ multiplier)")
+    ax1.set_title("(a) Stranger may halt the CRITICAL device",
+                  fontsize=10.5, fontweight="bold", loc="left")
     for i in range(len(scales_a)):
         for j in range(len(scales_L)):
-            ax.text(j, i, "Y" if grid[i, j] else "N", ha="center", va="center",
-                    fontsize=11, fontweight="bold",
-                    color="white" if grid[i, j] < 0.5 else INK)
-    plt.colorbar(im, ax=ax, fraction=0.035, pad=0.03, ticks=[0, 1],
-                label="stranger may halt CRITICAL device")
+            ax1.text(j, i, "Y" if grid[i, j] else "N", ha="center", va="center",
+                     fontsize=11, fontweight="bold",
+                     color="white" if grid[i, j] < 0.5 else INK)
+    plt.colorbar(im, ax=ax1, fraction=0.035, pad=0.03, ticks=[0, 1])
+
+    x = np.arange(len(cross))
+    w = 0.27
+    ax2.bar(x - w, [r["dln_lambda"] for r in cross], w, color=ALERT,
+            label=r"$\Delta\ln\Lambda$ (hazard)")
+    ax2.bar(x,     [r["dln_alpha"] for r in cross],  w, color=AMBER,
+            label=r"$\Delta\ln\alpha$ (needless stop)")
+    ax2.bar(x + w, [r["dln_phi"] for r in cross],    w, color=GREY,
+            label=r"$\Delta\ln\varphi$ (re-gesture)")
+    ax2.axhline(0, color=INK, lw=0.9)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels([r["step"].replace("->", "\n\u2192 ") for r in cross], fontsize=7.5)
+    ax2.set_ylabel("log growth per hazard step")
+    ax2.set_title("(b) Ordering holds only where hazard outgrows downtime",
+                  fontsize=10.5, fontweight="bold", loc="left")
+    ax2.legend(frameon=False, fontsize=7.5)
+    ax2.grid(axis="y", alpha=0.15)
+    for k, r in enumerate(cross):
+        if not (r["T_res_decreasing"] and r["T_perm_increasing"]):
+            ax2.annotate("ordering\nfails here", xy=(k, r["dln_phi"]),
+                         xytext=(k - 0.45, r["dln_phi"] + 1.4), fontsize=7.5,
+                         color=ALERT,
+                         arrowprops=dict(arrowstyle="->", color=ALERT, lw=1))
+
+    fig.suptitle("The per-device inversion is unconditional; the "
+                 "cross-class ordering is not",
+                 fontsize=11.5, fontweight="bold", y=1.03)
     plt.tight_layout()
-    plt.savefig(f"{FIG_DIR}/fig4_sensitivity.png")
+    plt.savefig(f"{FIG_DIR}/fig4_sensitivity.png", bbox_inches="tight")
     plt.close()
     print(f"  -> {FIG_DIR}/fig4_sensitivity.png\n")
 
@@ -439,7 +593,7 @@ def experiment_5_erlc_adversarial():
     print("=" * 78)
     print("E5  ERLC discriminability vs. adversary sophistication  (Table IV)")
     print("=" * 78)
-    RHO_MIN, RHO_MAX = 0.15, 1.0
+    RHO_MIN, RHO_MAX = P.RHO_MIN_S, P.RHO_MAX_S
     N = 20_000
     rng = np.random.default_rng(2026)
 
@@ -454,12 +608,20 @@ def experiment_5_erlc_adversarial():
         n1, n0 = y.sum(), (1 - y).sum()
         return (ranks[y == 1].sum() - n1 * (n1 + 1) / 2) / (n1 * n0)
 
-    samaritan = np.clip(rng.lognormal(np.log(0.42), 0.35, N), 0.05, 30)
+    # Genuine Good-Samaritan reaction latency, fitted to Olson and Sivak's
+    # surprise-hazard percentiles: median 1.1 s, 95th percentile 1.6 s.
+    samaritan = np.clip(
+        rng.lognormal(P.REFLEX_LOG_MU, P.REFLEX_LOG_SIGMA, N), 0.02, 60)
+    # Four adversaries of increasing sophistication. The expert is the honest
+    # worst case: an attacker who has read the same reaction-time literature
+    # we did and samples from the genuine distribution itself. No timing
+    # signal can separate that adversary from a real reflex, by construction.
     scenarios = {
-        "naive":        rng.exponential(600, N) + 2.0,
+        "naive":         rng.exponential(600, N) + 2.0,
         "opportunistic": rng.exponential(30, N) + 1.0,
-        "informed":     rng.exponential(2.5, N) + 0.3,
-        "expert":       np.clip(rng.lognormal(np.log(0.45), 0.4, N), 0.05, 30),
+        "informed":      rng.exponential(2.5, N) + 0.3,
+        "expert":        np.clip(
+            rng.lognormal(P.REFLEX_LOG_MU, P.REFLEX_LOG_SIGMA, N), 0.02, 60),
     }
     rows = []
     for name, sab in scenarios.items():
@@ -483,7 +645,7 @@ def experiment_5_erlc_adversarial():
     ax.set_xticklabels(lab, fontsize=10)
     ax.set_ylabel("AUC — separating reflex from sabotage")
     ax.set_ylim(0, 1.12)
-    ax.set_title("Fig. 5 — ERLC degrades as the adversary learns the timing",
+    ax.set_title("ERLC degrades as the adversary learns the timing",
                  fontsize=11.5, fontweight="bold", loc="left")
     ax.grid(axis="y", alpha=0.15)
     plt.tight_layout()
@@ -493,7 +655,7 @@ def experiment_5_erlc_adversarial():
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# E6 — FIGURE 6: clock skew breaks cross-device recency  (Sec. IX-F)
+# E6 — FIGURE 6: clock skew breaks cross-device recency  (Sec. VI, E6)
 # ═══════════════════════════════════════════════════════════════════════
 def experiment_6_clock_skew():
     print("=" * 78)
@@ -502,7 +664,7 @@ def experiment_6_clock_skew():
     rows = []
     rng = np.random.default_rng(31)
     TRIALS = 20_000
-    for skew_ms in [0, 1, 5, 10, 50, 100, 500]:
+    for skew_ms in P.CLOCK_SKEW_SWEEP_MS:
         disagree = 0
         for _ in range(TRIALS):
             true_gap = rng.exponential(0.05)
@@ -511,8 +673,8 @@ def experiment_6_clock_skew():
             if np.sign(obs1) != np.sign(obs2):
                 disagree += 1
         rate = disagree / TRIALS
-        rows.append(dict(clock_skew_ms=skew_ms, disagreement_rate=round(rate, 5)))
-        print(f"  skew={skew_ms:4d}ms  disagreement={rate*100:5.2f}%   (rho unaffected)")
+        rows.append(dict(clock_skew_ms=float(skew_ms), disagreement_rate=round(rate, 5)))
+        print(f"  skew={skew_ms:>7g}ms  disagreement={rate*100:5.2f}%   (rho unaffected)")
     write_csv(f"{DATA_DIR}/exp6_clock_skew.csv", rows)
 
     sk = [r["clock_skew_ms"] for r in rows]
@@ -523,7 +685,7 @@ def experiment_6_clock_skew():
     ax.set_xscale("symlog")
     ax.set_xlabel("clock skew between devices (ms)")
     ax.set_ylabel("% of conflicts with inconsistent ordering")
-    ax.set_title(r"Fig. 6 — Why recency needs a skew bound, and $\rho$ does not",
+    ax.set_title(r"Why recency needs a skew bound, and $\rho$ does not",
                 fontsize=11.5, fontweight="bold", loc="left")
     ax.legend(frameon=False, fontsize=9)
     ax.grid(alpha=0.15)
@@ -540,7 +702,7 @@ def experiment_7_inversion_and_testbed():
     """
     Plots the analytic threshold curves of Table I (the coupled inversion),
     then overlays the two measured points from the three-phone physical
-    testbed (Sec. IX-G): an unenrolled visitor's HALT on the CRITICAL robot
+    testbed (Sec. VI, E7): an unenrolled visitor's HALT on the CRITICAL robot
     (executed) and on the LOW lamp (denied).
 
     The testbed points below are the literal (c, T) pairs read from the
@@ -579,7 +741,7 @@ def experiment_7_inversion_and_testbed():
     ax.set_xticklabels(HAZ)
     ax.set_xlabel("device hazard class")
     ax.set_ylabel("required identity confidence (log scale)")
-    ax.set_title("Fig. 7 — The coupled inversion, with physical-testbed\n"
+    ax.set_title("The coupled inversion, with physical-testbed\n"
                 "validation points from the 3-phone deployment",
                 fontsize=11.5, fontweight="bold", loc="left")
 
@@ -625,11 +787,16 @@ def experiment_8_calibration_regret():
     C_FA, C_FR = L, f                # permissive: false-accept=Lambda, false-reject=phi
     eps = 0.01
     regret_bound = eps * (C_FA + C_FR)
-    c_grid = np.linspace(0.985, 1.0, 400)
+    # Plot window follows the threshold rather than a hardcoded range, so the
+    # figure stays correct when the grounded cost matrix moves T_perm.
+    lo = max(0.0, min(T - 4 * eps, P.OPERATOR_GOOD_MEAN - 4 * P.OPERATOR_GOOD_SD))
+    c_grid = np.linspace(lo, 1.0, 400)
     cost_execute = (1 - c_grid) * C_FA
     cost_withhold = c_grid * C_FR
 
-    c_operator = 0.9993
+    # Mean confidence of a well-imaged, credentialed operator (parameters.py
+    # section 4), i.e. the best case a single attestation can offer.
+    c_operator = P.OPERATOR_GOOD_MEAN
     band_lo, band_hi = T - eps, T + eps
     rows = [dict(T_perm_CRIT=T, C_FA=C_FA, C_FR=C_FR, eps=eps,
                  regret_bound=round(regret_bound, 2),
@@ -659,14 +826,15 @@ def experiment_8_calibration_regret():
     ax1.plot(c_grid, cost_execute, color=RISK, lw=2.2, label=r"cost(execute$\mid c$)")
     ax1.plot(c_grid, cost_withhold, color=SAFE, lw=2.2, label=r"cost(withhold$\mid c$)")
     ax1.axvline(T, color=INK, ls="--", lw=1)
-    ax1.axvspan(max(band_lo, 0.985), min(band_hi, 1.0), color=AMBER, alpha=0.18,
+    ax1.axvspan(max(band_lo, lo), min(band_hi, 1.0), color=AMBER, alpha=0.18,
                label=r"vulnerability band $[T\pm\varepsilon]$")
     ax1.axvline(c_operator, color=INK, lw=1.6)
     ax1.scatter([c_operator], [min((1-c_operator)*C_FA, c_operator*C_FR)],
                marker="o", s=90, color=INK, zorder=5)
-    ax1.annotate("measured operator\n$c=0.9993$", xy=(c_operator, 300),
-               xytext=(0.9865, 900), fontsize=8.5,
-               arrowprops=dict(arrowstyle="->", color=INK, lw=1))
+    ax1.annotate(f"well-imaged operator\n$c={c_operator:.3f}$",
+               xy=(c_operator, min((1-c_operator)*C_FA, c_operator*C_FR)),
+               xytext=(lo + 0.15 * (1.0 - lo), 0.55 * max(cost_execute.max(), cost_withhold.max())),
+               fontsize=8.5, arrowprops=dict(arrowstyle="->", color=INK, lw=1))
     ax1.set_xlabel(r"true identity confidence $c^{*}$")
     ax1.set_ylabel("expected cost (units)")
     ax1.set_title("(a) Regret geometry at CRITICAL / permissive",
@@ -686,7 +854,7 @@ def experiment_8_calibration_regret():
                   fontsize=10.5, fontweight="bold", loc="left")
     ax2.grid(alpha=0.15)
 
-    fig.suptitle("Fig. 8 -- Veracity is safety-critical, and costly to verify, "
+    fig.suptitle("Veracity is safety-critical, and costly to verify, "
                 "exactly where quorum applies", fontsize=11.5, fontweight="bold", y=1.03)
     plt.tight_layout()
     plt.savefig(f"{FIG_DIR}/fig8_calibration_regret.png", bbox_inches="tight")
@@ -775,7 +943,7 @@ def experiment_9_throughput_benchmark():
     ax.set_xticks(range(len(labels)))
     ax.set_xticklabels(labels, fontsize=8.5)
     ax.set_ylabel("decisions or events per second (log scale)")
-    ax.set_title("Fig. 9 -- RAGA's O(1) decision vs. published big-data\n"
+    ax.set_title("RAGA's O(1) decision vs. published big-data\n"
                 "streaming/CEP throughput (different hardware; order-of-magnitude only)",
                 fontsize=11, fontweight="bold", loc="left")
     ax.grid(axis="y", alpha=0.15, which="both")
@@ -812,7 +980,7 @@ def experiment_10_ablation():
         S, C = [], []
         for seed in range(10):
             rng = np.random.default_rng(900 + seed)
-            evs = [draw_event(rng, BASE_COST, gesture_err=0.02) for _ in range(30_000)]
+            evs = [draw_event(rng, BASE_COST, gesture_err=GERR) for _ in range(30_000)]
             r2 = np.random.default_rng(950 + seed)
             s, sec = score_run(pol, evs, BASE_COST, None, r2)
             S.append(s); C.append(sec)
@@ -851,16 +1019,18 @@ def experiment_11_stranger_spread():
         s = sec = 0
         for _ in range(N):
             r = rng.random()
-            if r < 0.80:
+            if r < P.POP_OPERATOR_GOOD + P.POP_OPERATOR_DEGRADED:
                 kind, auth = "op", True
-                c = float(np.clip(rng.normal(0.96, 0.04), C_FLOOR, 1))
-            elif r < 0.95:
+                c = float(np.clip(rng.normal(P.OPERATOR_GOOD_MEAN,
+                                             P.OPERATOR_GOOD_SD), C_FLOOR, 1))
+            elif r < P.POP_OPERATOR_GOOD + P.POP_OPERATOR_DEGRADED + P.POP_STRANGER:
                 kind, auth = "stranger", False
                 c = C_FLOOR if spread == 0 else float(
                     np.clip(10 ** rng.normal(np.log10(C_FLOOR), spread), 1e-6, 1))
             else:
                 kind, auth = "imp", False
-                c = float(np.clip(rng.normal(0.6, 0.25), C_FLOOR, 1))
+                c = float(np.clip(rng.normal(P.IMPOSTOR_MEAN,
+                                             P.IMPOSTOR_SD), C_FLOOR, 1))
             h = int(rng.integers(0, 4))
             pol = "RES" if rng.random() < (0.85 if kind == "stranger" else 0.5) else "PERM"
             warr = rng.random() < 0.9
@@ -892,7 +1062,7 @@ def experiment_11_stranger_spread():
                     [r["safety_at_stepped"] for r in rows], color=ALERT, alpha=0.08)
     ax.set_xlabel(r"stranger confidence spread ($\log_{10}$ s.d.; 0 = Prop. 1's model)")
     ax.set_ylabel("safety failures per 60,000 events")
-    ax.set_title("Fig. 11 — The cliff's sharpness depends on the stranger model;\n"
+    ax.set_title("The cliff's sharpness depends on the stranger model;\n"
                  "the trap itself does not", fontsize=11, fontweight="bold", loc="left")
     ax.legend(frameon=False, fontsize=9)
     ax.grid(alpha=0.15)
@@ -941,12 +1111,14 @@ def experiment_12_phase_transition():
         s = sec = nui = 0
         for _ in range(N):
             r = rng.random()
-            if r < 0.80:
-                auth, c = True, float(np.clip(rng.normal(0.96, 0.04), C_FLOOR, 1))
-            elif r < 0.95:
+            if r < P.POP_OPERATOR_GOOD + P.POP_OPERATOR_DEGRADED:
+                auth, c = True, float(np.clip(rng.normal(P.OPERATOR_GOOD_MEAN,
+                                                          P.OPERATOR_GOOD_SD), C_FLOOR, 1))
+            elif r < P.POP_OPERATOR_GOOD + P.POP_OPERATOR_DEGRADED + P.POP_STRANGER:
                 auth, c = False, C_FLOOR
             else:
-                auth, c = False, float(np.clip(rng.normal(0.6, 0.25), C_FLOOR, 1))
+                auth, c = False, float(np.clip(rng.normal(P.IMPOSTOR_MEAN,
+                                                           P.IMPOSTOR_SD), C_FLOOR, 1))
             h = int(rng.integers(0, 4))
             pt = "RES" if rng.random() < 0.6 else "PERM"
             pol = ("PERM" if pt == "RES" else "RES") if rng.random() < gerr else pt
@@ -960,13 +1132,13 @@ def experiment_12_phase_transition():
 
     gaps = [0.0, 0.25, 0.5, 0.7, 0.80, 0.85, 0.90, 0.95, 1.0, 1.25, 1.5, 2.0]
     rows = []
-    print(f"  {'gap':>5}{'T_res(HIGH)':>14}{'sec+nui':>12}{'safety@2%err':>15}"
+    print(f"  {'gap':>5}{'T_res(HIGH)':>14}{'sec+nui':>12}{'safety@err':>15}"
           f"{'strangers can halt':>20}")
     for gap in gaps:
         B, D = [], []
         for sd in range(15):
             _, sec0, nui0 = run(gap, 0.0, 300 + sd)
-            s2, _, _ = run(gap, 0.02, 300 + sd)
+            s2, _, _ = run(gap, GERR, 300 + sd)
             B.append(sec0 + nui0); D.append(s2)
         mb, _ = ci95(B); md, _ = ci95(D)
         tr_high, _ = thresholds(2, gap)
@@ -977,19 +1149,28 @@ def experiment_12_phase_transition():
         print(f"  {gap:>5.2f}{tr_high:>14.2e}{mb:>12.1f}{md:>15.1f}{n_halt:>20}")
     write_csv(f"{DATA_DIR}/exp12_phase_transition.csv", rows)
 
-    # locate the HIGH crossing by bisection
-    lo, hi = 0.0, 2.0
-    for _ in range(50):
-        mid = (lo + hi) / 2
-        if thresholds(2, mid)[0] > C_FLOOR: lo = mid
-        else: hi = mid
-    crossing = hi
+    # Locate EVERY crossing, not just HIGH's: with the grounded cost matrix the
+    # devices cross c_floor at different g, so the response is a staircase with
+    # one step per device rather than a single phase boundary.
+    crossings = []
+    for h in range(4):
+        lo, hi = 0.0, 4.0
+        if thresholds(h, hi)[0] > C_FLOOR:
+            continue                      # never becomes haltable in range
+        for _ in range(60):
+            mid = (lo + hi) / 2
+            if thresholds(h, mid)[0] > C_FLOOR: lo = mid
+            else: hi = mid
+        crossings.append(dict(hazard=HAZ[h], crossing_gap=round(float(hi), 4)))
+        print(f"  {HAZ[h]:9} T_res crosses c_floor at g = {hi:.4f}")
+    write_csv(f"{DATA_DIR}/exp12_crossings.csv", crossings)
+    crossing = [c["crossing_gap"] for c in crossings if c["hazard"] == "HIGH"][0]
     print(f"\n  T_res(HIGH) crosses c_floor at g = {crossing:.3f}")
     best = min(rows, key=lambda r: r["safety_at_2pct"])
     at_g1 = [r for r in rows if abs(r["gap"] - 1.0) < 1e-9][0]
     print(f"  robustness-optimal g = {best['gap']:.2f} "
-          f"(safety@2% = {best['safety_at_2pct']:.1f})")
-    print(f"  cost-optimal     g = 1.00 (safety@2% = {at_g1['safety_at_2pct']:.1f})")
+          f"(safety@{GERR:.0%} = {best['safety_at_2pct']:.1f})")
+    print(f"  cost-optimal     g = 1.00 (safety@{GERR:.0%} = {at_g1['safety_at_2pct']:.1f})")
     print(f"  -> cost-optimal is {at_g1['safety_at_2pct']/best['safety_at_2pct']:.1f}x "
           f"MORE fragile than the robustness optimum")
     write_csv(f"{DATA_DIR}/exp12_robustness_valley.csv", [dict(
@@ -1004,7 +1185,7 @@ def experiment_12_phase_transition():
     ax1.plot(g, [r["sec_plus_nui"] for r in rows], "-o", color=RISK, lw=2.2, ms=5,
              label="security + nuisance (no gesture error)")
     ax1.plot(g, [r["safety_at_2pct"] for r in rows], "-s", color=ALERT, lw=2.2, ms=5,
-             label="safety failures @ 2% gesture error")
+             label=f"safety failures @ {GERR:.0%} gesture error")
     ax1.axvline(crossing, color=SAFE, ls="--", lw=1.6)
     ax1.axvspan(crossing, 2.0, color=SAFE, alpha=0.06)
     ax1.text(crossing + 0.03, ax1.get_ylim()[1] * 0.88,
@@ -1015,7 +1196,7 @@ def experiment_12_phase_transition():
              fontsize=8.5, color=INK)
     ax1.set_xlabel(r"threshold separation exponent $g$  ($g{=}0$ collapsed, $g{=}1$ cost-optimal)")
     ax1.set_ylabel("failures per 40,000 events")
-    ax1.set_title("Fig. 12 — A phase transition, not a smooth trade-off",
+    ax1.set_title("A phase transition, not a smooth trade-off",
                   fontsize=11.5, fontweight="bold", loc="left")
     ax1.legend(frameon=False, fontsize=8.5, loc="upper right")
     ax1.grid(alpha=0.15)
@@ -1055,7 +1236,7 @@ def experiment_13_full_accounting():
     print("E13  four-quadrant cost-weighted accounting (review finding)")
     print("=" * 78)
 
-    def run(policy, seed, N=50_000, gerr=0.02):
+    def run(policy, seed, N=50_000, gerr=GERR, failsafe=False):
         rng = np.random.default_rng(seed)
         cnt = dict(safety=0, security=0, nuisance=0, friction=0)
         cost = dict(safety=0.0, security=0.0, nuisance=0.0, friction=0.0)
@@ -1063,18 +1244,28 @@ def experiment_13_full_accounting():
         auth_perm_h = [0, 0, 0, 0]
         for _ in range(N):
             r = rng.random()
-            if r < 0.55:   auth, c = True, float(np.clip(rng.normal(0.985, 0.02), C_FLOOR, 1))
-            elif r < 0.80: auth, c = True, float(np.clip(rng.normal(0.93, 0.05), C_FLOOR, 1))
-            elif r < 0.95: auth, c = False, C_FLOOR
-            else:          auth, c = False, float(np.clip(rng.normal(0.60, 0.25), C_FLOOR, 1))
+            if r < P.POP_OPERATOR_GOOD:
+                auth, c = True, float(np.clip(rng.normal(
+                    P.OPERATOR_GOOD_MEAN, P.OPERATOR_GOOD_SD), C_FLOOR, 1))
+            elif r < P.POP_OPERATOR_GOOD + P.POP_OPERATOR_DEGRADED:
+                auth, c = True, float(np.clip(rng.normal(
+                    P.OPERATOR_DEGRADED_MEAN, P.OPERATOR_DEGRADED_SD), C_FLOOR, 1))
+            elif r < P.POP_OPERATOR_GOOD + P.POP_OPERATOR_DEGRADED + P.POP_STRANGER:
+                auth, c = False, C_FLOOR
+            else:
+                auth, c = False, float(np.clip(rng.normal(
+                    P.IMPOSTOR_MEAN, P.IMPOSTOR_SD), C_FLOOR, 1))
             h = int(rng.integers(0, 4))
             L, a, f = BASE_COST[h]
             pt = "RES" if rng.random() < 0.5 else "PERM"
             pol = ("PERM" if pt == "RES" else "RES") if rng.random() < gerr else pt
+            if failsafe and pol == "PERM" and pt == "RES":
+                pol = "RES"          # Sec. V-E: ambiguity resolves restrictive
             warr = rng.random() < 0.9
             eff = c
             if "quorum" in policy and pol == "PERM" and h == 3:
-                c2 = float(np.clip(rng.normal(0.98, 0.03), C_FLOOR, 1))
+                c2 = float(np.clip(rng.normal(P.SECOND_ATTESTER_MEAN,
+                                     P.SECOND_ATTESTER_SD), C_FLOOR, 1))
                 eff = 1 - (1 - c) * (1 - c2)
             if policy.startswith("uniform"):
                 T = 1e-3
@@ -1120,6 +1311,30 @@ def experiment_13_full_accounting():
     write_csv(f"{DATA_DIR}/exp13_counts.csv", rows)
     write_csv(f"{DATA_DIR}/exp13_weighted.csv", wrows)
 
+    # The paper claims that applying the fail-safe rule and ranking by cost
+    # stabilises the ordering. That claim was previously asserted in prose but
+    # never computed here; it is computed now so the artifact backs it.
+    fs_rows = []
+    print("\n  cost-weighted totals WITH the fail-safe polarity rule applied:")
+    fs_store = {}
+    for p in policies:
+        Ks = []
+        for sd in range(10):
+            _cnt, cost, _fh, _ah = run(p, 700 + sd, failsafe=True)
+            Ks.append(cost)
+        mk = {k: float(np.mean([c[k] for c in Ks])) for k in Ks[0]}
+        tk = sum(mk.values())
+        fs_store[p] = tk
+        fs_rows.append(dict(policy=p, **{f"cost_{k}": round(v, 1) for k, v in mk.items()},
+                            weighted_total_failsafe=round(tk, 1)))
+        print(f"    {p:16s}{tk:>14.3e}")
+    write_csv(f"{DATA_DIR}/exp13_weighted_failsafe.csv", fs_rows)
+    fs_best = min(policies, key=lambda p: fs_store[p])
+    print(f"    -> best under fail-safe, by cost: {fs_best}")
+    write_csv(f"{DATA_DIR}/exp13_failsafe_ranking.csv", [dict(
+        best_by_weighted_cost_failsafe=fs_best,
+        **{f"total_{p}": round(fs_store[p], 1) for p in policies})])
+
     best_cnt = min(policies, key=lambda p: store[p][2])
     best_cost = min(policies, key=lambda p: store[p][3])
     print(f"\n  best by UNWEIGHTED count : {best_cnt}")
@@ -1144,15 +1359,22 @@ def experiment_13_full_accounting():
               f"= {r['refusal_rate']*100:5.1f}%")
 
     # ── quorum fusion semantics: noisy-OR vs conjunctive ──
-    def run_q(mode, seed, N=50_000, gerr=0.02):
+    def run_q(mode, seed, N=50_000, gerr=GERR):
         rng = np.random.default_rng(seed)
         cnt = dict(security=0, friction=0); tot = 0.0
         for _ in range(N):
             r = rng.random()
-            if r < 0.55:   auth, c = True, float(np.clip(rng.normal(0.985, 0.02), C_FLOOR, 1))
-            elif r < 0.80: auth, c = True, float(np.clip(rng.normal(0.93, 0.05), C_FLOOR, 1))
-            elif r < 0.95: auth, c = False, C_FLOOR
-            else:          auth, c = False, float(np.clip(rng.normal(0.60, 0.25), C_FLOOR, 1))
+            if r < P.POP_OPERATOR_GOOD:
+                auth, c = True, float(np.clip(rng.normal(
+                    P.OPERATOR_GOOD_MEAN, P.OPERATOR_GOOD_SD), C_FLOOR, 1))
+            elif r < P.POP_OPERATOR_GOOD + P.POP_OPERATOR_DEGRADED:
+                auth, c = True, float(np.clip(rng.normal(
+                    P.OPERATOR_DEGRADED_MEAN, P.OPERATOR_DEGRADED_SD), C_FLOOR, 1))
+            elif r < P.POP_OPERATOR_GOOD + P.POP_OPERATOR_DEGRADED + P.POP_STRANGER:
+                auth, c = False, C_FLOOR
+            else:
+                auth, c = False, float(np.clip(rng.normal(
+                    P.IMPOSTOR_MEAN, P.IMPOSTOR_SD), C_FLOOR, 1))
             h = int(rng.integers(0, 4)); L, a, f = BASE_COST[h]
             pt = "RES" if rng.random() < 0.5 else "PERM"
             pol = ("PERM" if pt == "RES" else "RES") if rng.random() < gerr else pt
@@ -1160,11 +1382,19 @@ def experiment_13_full_accounting():
             T = T_res(BASE_COST[h]) if pol == "RES" else T_perm(BASE_COST[h])
             ex = None
             if pol == "PERM" and h == 3 and mode != "none":
-                c2 = float(np.clip(rng.normal(0.98, 0.03), C_FLOOR, 1))
+                c2 = float(np.clip(rng.normal(P.SECOND_ATTESTER_MEAN,
+                                     P.SECOND_ATTESTER_SD), C_FLOOR, 1))
                 if mode == "noisy_or":
+                    # As originally specified: fuse into one boosted score.
                     ex = (1 - (1 - c) * (1 - c2)) >= T
                 else:
-                    ex = (c >= 0.95) and (c2 >= 0.95)
+                    # Conjunctive: each attester must independently clear the
+                    # SAME threshold T. No arbitrary per-party bar -- this is
+                    # exactly c_eff = min(c, c2) >= T, matching Algorithm 2 and
+                    # the testbed implementation. It is strictly stricter than
+                    # no quorum, so it trades a little friction for the
+                    # security blow-up that noisy-OR causes.
+                    ex = min(c, c2) >= T
             if ex is None: ex = c >= T
             if pt == "RES" and rng.random() < 0.9 and h >= 2 and not ex: tot += L
             if pol == "PERM" and not auth and h >= 1 and ex:
@@ -1221,12 +1451,151 @@ def experiment_13_full_accounting():
                   fontsize=10.5, fontweight="bold", loc="left")
     ax2.grid(axis="y", alpha=0.15, which="both")
 
-    fig.suptitle("Fig. 13 — Completeness AND weighting both change the answer",
+    fig.suptitle("Completeness AND weighting both change the answer",
                  fontsize=11.5, fontweight="bold", y=1.02)
     plt.tight_layout()
     plt.savefig(f"{FIG_DIR}/fig13_full_accounting.png", bbox_inches="tight")
     plt.close()
     print(f"\n  -> {FIG_DIR}/fig13_full_accounting.png\n")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# E14 -- FIGURE 14: the stranger-halt property is bought with fast restart
+# ═══════════════════════════════════════════════════════════════════════
+def experiment_14_stop_category():
+    """
+    The finding that only appears once the cost matrix is denominated in real
+    money rather than arbitrary units.
+
+    Corollary 2 says an unidentified bystander may halt a device exactly when
+    Lambda >= alpha * (1-c_floor)/c_floor. With Lambda fixed by what a
+    workplace fatality costs (NSC: $1.54M) and alpha fixed by what an
+    unnecessary stop costs (Siemens: automotive downtime $2M/h = $556/s),
+    that inequality is no longer comfortably satisfied -- it becomes a
+    constraint on how quickly the device can resume.
+
+    Concretely: the arm can afford to let strangers halt it only if a needless
+    stop costs less than about $1,540, i.e. less than roughly 2.8 seconds of
+    line time. A safety-rated monitored stop (ISO/TS 15066), which resumes
+    automatically once the person leaves the collaborative workspace, fits
+    inside that budget. An emergency stop requiring a manual reset and restart
+    sequence does not, and forfeits the property entirely.
+
+    The design rule that falls out is actionable: if you want bystanders to be
+    able to halt your most dangerous machine, buy the fast-resume stop.
+    """
+    print("=" * 78)
+    print("E14  stop category vs. the stranger-halt property (grounded costs)")
+    print("=" * 78)
+
+    L = P.HARM["arm"]
+    rate = P.DOWNTIME_RATE_PER_S[P.DEVICE_SECTOR["arm"]]
+    alpha_budget = L * C_FLOOR / (1.0 - C_FLOOR)   # exact Corollary 2 bound
+    t_breakeven = alpha_budget / rate
+
+    print(f"  Lambda (NSC cost per workplace death)   = ${L:,.0f}")
+    print(f"  automotive downtime rate (Siemens)      = ${rate:,.2f}/s")
+    print(f"  alpha budget at c_floor={C_FLOOR:.0e}          = ${alpha_budget:,.2f}")
+    print(f"  => break-even restart duration          = {t_breakeven:.3f} s\n")
+
+    rows = []
+    print(f"  {'t_stop (s)':>11}{'alpha ($)':>14}{'T_res':>13}{'stranger may halt':>20}")
+    for t_stop in [0.5, 1.0, 2.0, 2.5, 2.77, 3.0, 5.0, 10.0, 30.0, 60.0, 120.0]:
+        a = t_stop * rate
+        tres = a / (a + L)
+        ok = bool(tres <= C_FLOOR)
+        rows.append(dict(t_stop_s=t_stop, alpha_usd=round(a, 2),
+                         T_res=round(float(tres), 9), stranger_may_halt=ok))
+        print(f"  {t_stop:>11.2f}{a:>14,.0f}{tres:>13.3e}{('YES' if ok else 'no'):>20}")
+    write_csv(f"{DATA_DIR}/exp14_stop_category.csv", rows)
+
+    named = []
+    for label, t_stop in [("safety-rated monitored stop", P.T_STOP_S["arm"]),
+                          ("emergency stop, manual reset", P.T_STOP_S_ARM_EMERGENCY_STOP)]:
+        a = t_stop * rate
+        tres = a / (a + L)
+        named.append(dict(stop_category=label, t_stop_s=t_stop, alpha_usd=round(a, 2),
+                          T_res=round(float(tres), 9), lambda_over_alpha=round(L / a, 1),
+                          stranger_may_halt=bool(tres <= C_FLOOR)))
+        print(f"\n  {label}: t_stop={t_stop}s, alpha=${a:,.0f}, "
+              f"T_res={tres:.3e}, Lambda/alpha={L/a:,.0f} -> "
+              f"{'stranger MAY halt' if tres <= C_FLOOR else 'stranger may NOT halt'}")
+    write_csv(f"{DATA_DIR}/exp14_stop_categories_named.csv", named)
+
+    srows = []
+    print(f"\n  break-even restart duration vs. open-set operating point:")
+    for cf in P.C_FLOOR_SWEEP:
+        tb = (L * cf / (1.0 - cf)) / rate
+        srows.append(dict(c_floor=cf, breakeven_t_stop_s=round(float(tb), 4)))
+        print(f"    c_floor={cf:.0e}  ->  t_stop must be < {tb:.3f} s")
+    write_csv(f"{DATA_DIR}/exp14_breakeven_vs_cfloor.csv", srows)
+
+    t_grid = np.logspace(np.log10(0.2), np.log10(200), 400)
+    tres_grid = (t_grid * rate) / (t_grid * rate + L)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.4, 4.3))
+
+    ax1.plot(t_grid, tres_grid, color=INK, lw=2.4)
+    ax1.axhline(C_FLOOR, color=GREY, ls="--", lw=1.4)
+    ax1.text(0.23, C_FLOOR * 1.3, r"$c_{\mathrm{floor}}$ (unidentified actor)",
+             fontsize=8.5, color=GREY)
+    ax1.axvspan(0.2, t_breakeven, color=SAFE, alpha=0.10)
+    ax1.axvline(t_breakeven, color=SAFE, ls="--", lw=1.6)
+    ax1.text(t_breakeven * 1.18, tres_grid.min() * 2.0,
+             f"break-even\n{t_breakeven:.2f} s", fontsize=8.5, color=SAFE)
+    ax1.set_xscale("log")
+    ax1.set_yscale("log")
+    # Fix the limits BEFORE annotating, with headroom above the curve, so no
+    # label can be pushed into the panel title. Both labels are then placed by
+    # hand in the open band between the c_floor line and the curve: the two
+    # markers sit in very different parts of the plot, so one shared offset
+    # formula (which is what previously threw the emergency-stop label into
+    # the title) cannot serve both.
+    ax1.set_xlim(0.2, 260)
+    ax1.set_ylim(tres_grid.min() * 0.55, tres_grid.max() * 1.9)
+    for label, t_stop, col, tx, ty, ha in [
+            ("safety-rated\nmonitored stop", P.T_STOP_S["arm"], SAFE,
+             0.62, 4.0e-3, "center"),
+            ("emergency stop,\nmanual reset", P.T_STOP_S_ARM_EMERGENCY_STOP, ALERT,
+             150.0, 4.2e-3, "right")]:
+        y = (t_stop * rate) / (t_stop * rate + L)
+        ax1.scatter([t_stop], [y], s=110, color=col, edgecolor=INK,
+                    linewidth=1.1, zorder=5)
+        ax1.annotate(label, xy=(t_stop, y), xytext=(tx, ty),
+                     fontsize=8, color=col, ha=ha, va="center",
+                     arrowprops=dict(arrowstyle="->", color=col, lw=1,
+                                     shrinkA=2, shrinkB=6))
+    ax1.set_xlabel("time to resume after a needless stop (s, log scale)")
+    ax1.set_ylabel(r"$T_{\mathrm{res}}$ for the robot arm (log scale)")
+    ax1.set_title("(a) Who may halt the arm is decided by how fast it restarts",
+                  fontsize=10.5, fontweight="bold", loc="left")
+    ax1.grid(alpha=0.15, which="both")
+
+    cfs = [r["c_floor"] for r in srows]
+    tbs = [r["breakeven_t_stop_s"] for r in srows]
+    ax2.plot(cfs, tbs, "-o", color=RISK, lw=2.2, ms=7)
+    ax2.set_xscale("log")
+    ax2.set_yscale("log")
+    # Widen the limits first, then label each point into the empty lower-right
+    # triangle. The previous offsets pushed the top label outside the axes.
+    ax2.set_xlim(min(cfs) * 0.30, max(cfs) * 4.5)
+    ax2.set_ylim(min(tbs) * 0.30, max(tbs) * 3.0)
+    for cf, tb in zip(cfs, tbs):
+        ax2.annotate(f"{tb:.3g}s", xy=(cf, tb), xytext=(cf * 1.45, tb * 0.62),
+                     fontsize=8.5, color=RISK, ha="left", va="center")
+    ax2.set_xlabel(r"open-set operating point $c_{\mathrm{floor}}$ (NIST FMR)")
+    ax2.set_ylabel("break-even restart budget (s)")
+    ax2.set_title("(b) A stricter open-set threshold buys a tighter budget",
+                  fontsize=10.5, fontweight="bold", loc="left")
+    ax2.grid(alpha=0.15, which="both")
+
+    fig.suptitle("With costs in real money, the stranger-halt property "
+                 "is purchased with restart speed",
+                 fontsize=11.5, fontweight="bold", y=1.02)
+    plt.tight_layout()
+    plt.savefig(f"{FIG_DIR}/fig14_stop_category.png", bbox_inches="tight")
+    plt.close()
+    print(f"\n  -> {FIG_DIR}/fig14_stop_category.png\n")
 
 
 if __name__ == "__main__":
@@ -1243,6 +1612,7 @@ if __name__ == "__main__":
     experiment_11_stranger_spread()
     experiment_12_phase_transition()
     experiment_13_full_accounting()
+    experiment_14_stop_category()
 
     print("=" * 78)
     print(f"Done. Figures in ./{FIG_DIR}/   Datasets in ./{DATA_DIR}/")

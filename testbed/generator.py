@@ -9,8 +9,8 @@ the paper describes running on one of the three Android/Termux phones.
 
 Identity confidence c is INJECTED on the command line rather than computed
 from camera/IMU fusion -- the paper is explicit that the testbed validates
-distributed decision behaviour, not sensing (Sec. VI, Threats to Validity):
-"identity confidence is injected, with no gesture recognition in the loop."
+distributed decision behaviour, not sensing (Sec. VI-B): "Identity confidence
+is injected and no gesture recogniser runs in the loop."
 That is also why there is no FuseIdentity/LivenessCorrelate step here:
 Algorithm 1's sensing-fusion lines (3, 10-13) are the sensing pipeline this
 testbed intentionally does not implement.
@@ -56,7 +56,7 @@ def main():
     ap.add_argument("--role", default="stranger",
                      choices=["operator", "stranger", "impostor"])
     ap.add_argument("--c", type=float, required=True,
-                     help="identity confidence in [c_floor, 1] (injected, per Threats to Validity)")
+                     help="identity confidence in [c_floor, 1] (injected, not sensed -- Sec. VI-B)")
     ap.add_argument("--c-second", type=float, default=None,
                      help="optional second attester's confidence, for conjunctive-quorum "
                           "testing (Sec. VI, E13). Not part of the paper's own three-phone "

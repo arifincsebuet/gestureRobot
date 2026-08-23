@@ -6,7 +6,7 @@ In the real deployment this fires automatically when a device agent's own
 sensors detect a hazard-relevant transition (Sec. V-D: "each device
 maintains an event timeline of hazard-relevant transitions it detected,
 stamped on its own clock"). On the physical testbed, where sensing is out
-of scope (Threats to Validity), this script stands in for that detection:
+of scope (Sec. VI-B), this script stands in for that detection:
 it sends a one-word UDP datagram to a device agent's --control-port, which
 appends a timestamp (on THAT agent's own clock) to its hazard timeline.
 

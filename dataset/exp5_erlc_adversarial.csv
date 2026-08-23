@@ -1,5 +1,5 @@
 adversary,auc,pct_in_band
-naive,1.0,0.0
-opportunistic,1.0,0.0
-informed,0.9206,0.2466
-expert,0.5468,0.9768
+naive,1.0,0.0005
+opportunistic,0.9939,0.0508
+informed,0.7226,0.5852
+expert,0.499,0.9999

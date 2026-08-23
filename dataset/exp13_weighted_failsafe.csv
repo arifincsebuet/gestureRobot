@@ -1,0 +1,5 @@
+policy,cost_safety,cost_security,cost_nuisance,cost_friction,weighted_total_failsafe
+uniform_loose,0.0,2479842080.0,1042980.9,0.0,2480885060.9
+polarity_only,0.0,36622320.0,1042980.9,29726854.6,67392155.6
+raga,0.0,36107520.0,375974.8,29175159.6,65658654.5
+raga+quorum,0.0,845149560.0,373917.0,3452036.5,848975513.5

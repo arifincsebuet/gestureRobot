@@ -45,12 +45,14 @@ import common  # noqa: E402
 
 
 class DeviceAgent:
-    def __init__(self, device_id, hazard_class, secret, window, log_file):
+    def __init__(self, device_id, hazard_class, secret, window, log_file,
+                 emergency_stop=False):
         self.device_id = device_id
         self.hazard_class = hazard_class
         self.secret = secret
         self.window = window
         self.log_file = log_file
+        self.emergency_stop = emergency_stop
         self.hazard_timeline = []          # H_d: own-clock hazard-event timestamps
         self.pending = []                  # P_d: recent unexpired envelopes (for R1 arbitration)
         self.lock = threading.Lock()
@@ -85,7 +87,8 @@ class DeviceAgent:
                                         "dominated: concurrent RES envelope takes precedence (R1)")
             self.pending.append(envelope)
 
-        T = common.effective_threshold(envelope["polarity"], self.hazard_class, rho)
+        T = common.effective_threshold(envelope["polarity"], self.hazard_class, rho,
+                                       self.emergency_stop)
 
         c_eff = envelope["c"]
         if envelope.get("c_second") is not None:
@@ -167,11 +170,17 @@ def main():
     ap.add_argument("--res-window", type=float, default=common.DEFAULT_WINDOW["RES"])
     ap.add_argument("--perm-window", type=float, default=common.DEFAULT_WINDOW["PERM"])
     ap.add_argument("--log-file", default=None)
+    ap.add_argument("--emergency-stop", action="store_true",
+                     help="cost a needless stop as an emergency stop needing a manual "
+                          "reset (60 s of line time) rather than a safety-rated monitored "
+                          "stop (2 s). CRITICAL only. This single flag decides whether an "
+                          "unidentified bystander may halt the arm at all (E14).")
     args = ap.parse_args()
 
     secret = common.load_secret(args.secret)
     window = {"RES": args.res_window, "PERM": args.perm_window}
-    agent = DeviceAgent(args.device_id, args.hazard_class, secret, window, args.log_file)
+    agent = DeviceAgent(args.device_id, args.hazard_class, secret, window, args.log_file,
+                        emergency_stop=args.emergency_stop)
 
     t1 = threading.Thread(target=envelope_listener, args=(agent, args.bind_port), daemon=True)
     t2 = threading.Thread(target=control_listener, args=(agent, args.control_port), daemon=True)

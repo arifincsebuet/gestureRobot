@@ -14,6 +14,8 @@ check GestureRobot.tex for which merged figures are actually \includegraphics'd)
   fig/merged_negresults.png        (a) E3 gesture err  (b) E5 ERLC adversarial
   fig/merged_sensitivity_phase.png (a) E4 heatmap      (b) E12 phase transition
   fig/merged_sysprops.png          (a) E6 clock skew   (b) E9 throughput
+  fig/merged_policy_throughput.png (a) E2 policies     (b) E9 throughput
+  fig/merged_testbed_phase.png     (a) E7 thresholds   (b) E14 stop category
 """
 import csv
 import numpy as np
@@ -245,9 +247,129 @@ def merge_sysprops():
     print(f"-> {FIG_DIR}/merged_sysprops.png")
 
 
+
+# ═══════════════════════════════════════════════════════════════════════
+# Merge 5: E2 policy comparison + E9 throughput
+# ═══════════════════════════════════════════════════════════════════════
+def merge_policy_throughput():
+    rows2 = read_csv("exp2_policy_summary.csv")
+    lab = [r["policy"].replace("uniform_", "uni-")
+                      .replace("raga+quorum+live", "raga+q\n+live")
+                      .replace("polarity_only", "polarity\nonly")
+           for r in rows2]
+    S = [float(r["safety_mean"]) for r in rows2]
+    C = [float(r["security_mean"]) for r in rows2]
+    Nn = [float(r["nuisance_mean"]) for r in rows2]
+    tot = [float(r["total_mean"]) for r in rows2]
+    x = np.arange(len(lab))
+
+    rows9 = read_csv("exp9_throughput_comparison.csv")
+    labels9 = [r["system"] for r in rows9]
+    vals9 = [float(r["throughput"]) for r in rows9]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.4, 4.3))
+
+    ax1.bar(x, S, 0.6, color=ALERT, label="safety")
+    ax1.bar(x, C, 0.6, bottom=S, color=RISK, label="security")
+    ax1.bar(x, Nn, 0.6, bottom=np.array(S) + np.array(C), color=AMBER, label="nuisance")
+    for i, t in enumerate(tot):
+        ax1.text(i, t * 1.02 + 30, f"{t:.0f}", ha="center", fontsize=8,
+                 fontweight="bold")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(lab, fontsize=7.5, rotation=12)
+    ax1.set_ylabel("failures per 50,000 events (30 seeds)")
+    ax1.set_title("(a) Policy comparison, all three error types",
+                  fontsize=10.5, fontweight="bold", loc="left")
+    ax1.legend(frameon=False, fontsize=8)
+    ax1.grid(axis="y", alpha=0.15)
+
+    cols = [SAFE] + [GREY] * (len(vals9) - 1)
+    ax2.bar(range(len(vals9)), vals9, color=cols)
+    ax2.set_yscale("log")
+    ax2.set_ylim(top=max(vals9) * 2.4)
+    for i, v in enumerate(vals9):
+        ax2.text(i, v * 1.18, f"{v:,.0f}/s", ha="center", fontsize=8,
+                 fontweight="bold")
+    ax2.set_xticks(range(len(labels9)))
+    ax2.set_xticklabels(labels9, fontsize=7.5)
+    ax2.set_ylabel("events per second (log scale)")
+    ax2.set_title("(b) Decision throughput vs. published CEP figures",
+                  fontsize=10.5, fontweight="bold", loc="left")
+    ax2.grid(axis="y", alpha=0.15, which="both")
+
+    plt.tight_layout()
+    plt.savefig(f"{FIG_DIR}/merged_policy_throughput.png", bbox_inches="tight")
+    plt.close()
+    print(f"-> {FIG_DIR}/merged_policy_throughput.png")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Merge 6: E7 inversion/testbed + E14 stop category
+# ═══════════════════════════════════════════════════════════════════════
+def merge_testbed_phase():
+    rows7 = read_csv("exp7_threshold_table.csv")
+    haz = [r["hazard"] for r in rows7]
+    tres = [float(r["T_halt"]) for r in rows7]
+    tperm = [float(r["T_start"]) for r in rows7]
+    hz = list(range(len(haz)))
+
+    pts = read_csv("exp7_testbed_points.csv")
+    rows14 = read_csv("exp14_stop_category.csv")
+    t_stop = [float(r["t_stop_s"]) for r in rows14]
+    tr14 = [float(r["T_res"]) for r in rows14]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.4, 4.3))
+
+    ax1.plot(hz, tres, "-o", color=SAFE, lw=2.4, ms=7,
+             label=r"$T_{\mathrm{res}}$ (halt)")
+    ax1.plot(hz, tperm, "-o", color=RISK, lw=2.4, ms=7,
+             label=r"$T_{\mathrm{perm}}$ (start)")
+    ax1.axhline(C_FLOOR, color=GREY, ls="--", lw=1)
+    ax1.text(0, C_FLOOR * 1.7, r"$c_{\mathrm{floor}}$", fontsize=8.5, color=GREY)
+    ax1.set_yscale("log")
+    ax1.set_xticks(hz)
+    ax1.set_xticklabels(haz, fontsize=8.5)
+    ax1.set_xlabel("device hazard class")
+    ax1.set_ylabel("required identity confidence (log)")
+    ax1.set_title("(a) The grounded threshold table, with testbed points",
+                  fontsize=10.5, fontweight="bold", loc="left")
+    for p in pts:
+        idx = int(p["hazard_idx"])
+        cval = float(p["c"])
+        ex = p["outcome"] == "EXECUTE"
+        ax1.scatter([idx], [cval], marker="^" if ex else "x", s=150,
+                    color=SAFE if ex else ALERT,
+                    edgecolor=INK if ex else None,
+                    linewidth=1.2 if ex else 2.4, zorder=5)
+    ax1.legend(frameon=False, fontsize=8, loc="center left")
+    ax1.grid(alpha=0.15)
+
+    ax2.plot(t_stop, tr14, "-o", color=INK, lw=2.2, ms=5)
+    ax2.axhline(C_FLOOR, color=GREY, ls="--", lw=1.4)
+    ax2.set_xscale("log")
+    ax2.set_yscale("log")
+    ok = [t for t, v in zip(t_stop, tr14) if v <= C_FLOOR]
+    if ok:
+        ax2.axvspan(min(t_stop), max(ok), color=SAFE, alpha=0.10)
+        ax2.text(max(ok) * 1.1, min(tr14) * 1.8,
+                 "stranger may halt\n(fast-resume stop)", fontsize=8, color=SAFE)
+    ax2.set_xlabel("time to resume after a needless stop (s, log)")
+    ax2.set_ylabel(r"$T_{\mathrm{res}}$ for the robot arm (log)")
+    ax2.set_title("(b) Bystander halt authority is bought with restart speed",
+                  fontsize=10.5, fontweight="bold", loc="left")
+    ax2.grid(alpha=0.15, which="both")
+
+    plt.tight_layout()
+    plt.savefig(f"{FIG_DIR}/merged_testbed_phase.png", bbox_inches="tight")
+    plt.close()
+    print(f"-> {FIG_DIR}/merged_testbed_phase.png")
+
+
 if __name__ == "__main__":
     merge_trap_spread()
     merge_negresults()
     merge_sensitivity_phase()
     merge_sysprops()
-    print("\nAll 4 merged figures generated from existing CSVs (no simulation re-run).")
+    merge_policy_throughput()
+    merge_testbed_phase()
+    print("\nAll merged figures generated from existing CSVs (no simulation re-run).")

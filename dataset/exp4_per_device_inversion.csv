@@ -1,0 +1,5 @@
+device,hazard,T_res,T_perm,inversion_holds
+lamp,LOW,0.338660788,0.984869936,True
+oven,MEDIUM,0.119266055,0.993274703,True
+agv,HIGH,0.000109283,0.999344659,True
+arm,CRITICAL,0.000720981,0.989293362,True
