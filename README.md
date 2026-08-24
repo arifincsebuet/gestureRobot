@@ -93,7 +93,7 @@ its expected values from the same run it's checking. A clean run prints:
 
 ```
 ========================================================================
-Verified 141 numeric claims against dataset/
+Verified 147 numeric claims against dataset/
 ========================================================================
 
 All paper claims are consistent with the generated data.
@@ -120,7 +120,7 @@ number. The paper itself now quotes only the measured per-decision latency.
 
 ### Reference data
 
-`dataset/` contains the CSVs from one verified run (all 141 checks passed
+`dataset/` contains the CSVs from one verified run (all 147 checks passed
 against the current manuscript). This is included so a reviewer can inspect
 the exact numbers behind every table without spending the ~3 minutes to
 regenerate them, and to make it easy to spot if a future code change causes

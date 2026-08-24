@@ -66,6 +66,13 @@ PAPER_CLAIMS = {
         "raga+quorum":   (292.9, 604.3,  301.0, 8586.9),
     },
     # Table IX: quorum fusion semantics (security, friction)
+    "E13_failsafe_paired": {
+        "mean_saving_musd": 1.73,
+        "ci_low_musd": 1.33,
+        "ci_high_musd": 2.14,
+        "cohens_d": 3.07,
+        "raga_cheaper_on_seeds": 10,
+    },
     "E13_quorum": {
         "none":        (48.9,  9671.9),
         "noisy_or":    (569.7, 8122.0),
@@ -415,6 +422,37 @@ if rows:
         problems.append(
             "E13 STRUCTURAL: unweighted and cost-weighted rankings now AGREE. "
             "E13's central claim that they disagree is contradicted.")
+
+# The paper's recommendation rests on a 2.6% cost margin between RAGA and the
+# polarity-only ablation under the fail-safe rule. A margin that small is only
+# meaningful if it is stable across seeds, so the paper reports a paired CI and
+# effect size; check those, and guard the direction structurally.
+rows = read("exp13_failsafe_paired.csv")
+if rows:
+    r = rows[0]
+    check("E13 failsafe paired mean saving ($M)",
+          PAPER_CLAIMS["E13_failsafe_paired"]["mean_saving_musd"],
+          round(float(r["mean_saving"]) / 1e6, 2), tol=0.01)
+    check("E13 failsafe paired CI low ($M)",
+          PAPER_CLAIMS["E13_failsafe_paired"]["ci_low_musd"],
+          round(float(r["ci95_low"]) / 1e6, 2), tol=0.01)
+    check("E13 failsafe paired CI high ($M)",
+          PAPER_CLAIMS["E13_failsafe_paired"]["ci_high_musd"],
+          round(float(r["ci95_high"]) / 1e6, 2), tol=0.01)
+    check("E13 failsafe paired Cohen's d",
+          PAPER_CLAIMS["E13_failsafe_paired"]["cohens_d"],
+          round(float(r["cohens_d"]), 2), tol=0.01)
+    check("E13 failsafe paired seeds won",
+          PAPER_CLAIMS["E13_failsafe_paired"]["raga_cheaper_on_seeds"],
+          int(r["raga_cheaper_on_seeds"]), tol=0)
+    # STRUCTURAL: if the CI ever crosses zero, the paper's recommendation of the
+    # full method over the polarity-only ablation is no longer supported.
+    checks += 1
+    if float(r["ci95_low"]) <= 0:
+        problems.append(
+            "E13 STRUCTURAL: the paired 95% CI for RAGA vs polarity-only under "
+            "the fail-safe rule now includes zero. The paper's recommendation of "
+            "the full method rests on this margin being significant.")
 
 rows = read("exp13_quorum_semantics.csv")
 if rows:

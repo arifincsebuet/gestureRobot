@@ -1317,6 +1317,7 @@ def experiment_13_full_accounting():
     fs_rows = []
     print("\n  cost-weighted totals WITH the fail-safe polarity rule applied:")
     fs_store = {}
+    fs_perseed = {}
     for p in policies:
         Ks = []
         for sd in range(10):
@@ -1325,10 +1326,36 @@ def experiment_13_full_accounting():
         mk = {k: float(np.mean([c[k] for c in Ks])) for k in Ks[0]}
         tk = sum(mk.values())
         fs_store[p] = tk
+        fs_perseed[p] = [sum(c.values()) for c in Ks]
         fs_rows.append(dict(policy=p, **{f"cost_{k}": round(v, 1) for k, v in mk.items()},
                             weighted_total_failsafe=round(tk, 1)))
         print(f"    {p:16s}{tk:>14.3e}")
     write_csv(f"{DATA_DIR}/exp13_weighted_failsafe.csv", fs_rows)
+
+    # The RAGA-vs-polarity_only margin under the fail-safe rule is small (~2.5%),
+    # and the paper's recommendation rests on it. Every policy is scored on the
+    # SAME seeds, so the comparison is paired: test it rather than asserting it.
+    d = np.array(fs_perseed["polarity_only"]) - np.array(fs_perseed["raga"])
+    n = len(d)
+    md, sd_ = float(d.mean()), float(d.std(ddof=1))
+    se = sd_ / np.sqrt(n)
+    t_stat = md / se if se > 0 else float("inf")
+    # 95% CI, t(9) two-sided critical value
+    tcrit = 2.262
+    lo, hi = md - tcrit * se, md + tcrit * se
+    cohen_d = md / sd_ if sd_ > 0 else float("inf")
+    wins = int((d > 0).sum())
+    pct = 100.0 * md / float(np.mean(fs_perseed["polarity_only"]))
+    print(f"\n  paired RAGA vs polarity-only under fail-safe ({n} seeds):")
+    print(f"    mean saving = {md:,.0f} ({pct:.1f}%), 95% CI [{lo:,.0f}, {hi:,.0f}]")
+    print(f"    t={t_stat:.2f}, Cohen's d={cohen_d:.2f}, RAGA cheaper on {wins}/{n} seeds")
+    write_csv(f"{DATA_DIR}/exp13_failsafe_paired.csv", [dict(
+        comparison="polarity_only_minus_raga_failsafe", n_seeds=n,
+        mean_saving=round(md, 1), pct_saving=round(pct, 2),
+        ci95_low=round(lo, 1), ci95_high=round(hi, 1),
+        t_stat=round(t_stat, 3), cohens_d=round(cohen_d, 3),
+        raga_cheaper_on_seeds=wins,
+        significant_at_05=bool(abs(t_stat) > tcrit))])
     fs_best = min(policies, key=lambda p: fs_store[p])
     print(f"    -> best under fail-safe, by cost: {fs_best}")
     write_csv(f"{DATA_DIR}/exp13_failsafe_ranking.csv", [dict(
