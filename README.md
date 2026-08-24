@@ -24,8 +24,6 @@ how it is generated or checked.
 > review: no author names, affiliations, institutional identifiers, or local
 > paths appear in any file, and the committed figures carry no metadata beyond
 > the matplotlib version. Do not add attribution before the review period ends.
-> See [Publishing an anonymous review link](#publishing-an-anonymous-review-link)
-> below — the repository contents are only half of what has to stay anonymous.
 
 ## What's here
 
@@ -115,10 +113,10 @@ see its module docstring for the history of why it was written.
 All Monte Carlo randomness is explicitly seeded (see `RNG_MASTER_SEED` and
 the per-experiment seed offsets in `raga_experiments.py`); a fresh run should
 reproduce the reference data in `dataset/` exactly. The one exception is E9
-(decision throughput), which is a wall-clock timing measurement — the paper
-reports it as an order-of-magnitude comparison for exactly this reason, and
+(decision throughput), which is a wall-clock timing measurement. E9 reports it
+as an order-of-magnitude comparison for exactly this reason, and
 `verify_paper_claims.py` checks only the order of magnitude, not the exact
-number.
+number. The paper itself now quotes only the measured per-decision latency.
 
 ### Reference data
 
@@ -202,6 +200,21 @@ extension for anyone who wants to exercise the corrected quorum design
 (Sec. VI, E13) on physical hardware too — the paper's own three-phone trial
 tested only the threshold inversion and ERLC, not quorum.
 
+## Two things that look like bugs but are not
+
+**E2 and E13 use different polarity mixes.** In `draw_event` (E2) strangers
+issue restrictive commands 85% of the time — a bystander is far more likely to
+be halting something than starting it. E13's `run` draws polarity uniformly for
+every actor, which is the more adversarial assumption and roughly triples
+unauthorized permissive volume. That is why uniform-loose security failures are
+1975 in Table II and 3754 in Table III on what otherwise look like identical
+configurations. The paper's Table III caption states this; the counts are not
+meant to be compared across the two tables.
+
+**E12's separation exponent is `g` in the code and `s` in the paper.** The paper
+renames it to avoid colliding with Eq. (4)'s ERLC multipliers `g_res`/`g_perm`.
+The CSV column stays `g`.
+
 ## Scope
 
 The physical testbed validates *distributed decision behaviour*, not sensing:
@@ -214,4 +227,3 @@ The reflex-band values are borrowed from *braking* responses to surprise road
 hazards, the best-characterised human hazard-reaction data we could find;
 measuring the band for *gestural* responses on deployed hardware is the main
 outstanding measurement, and the paper says so.
-
